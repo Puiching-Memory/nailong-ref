@@ -1,0 +1,49 @@
+[project]
+name = "nailong"
+version = "0.1.0"
+description = "从 B 站奶龙短剧抽取干净人声：分离 -> 切句 -> 声纹打分 -> 交付片段"
+readme = "README.md"
+requires-python = ">=3.10"
+
+# 只放轻量公共依赖。重依赖按阶段分到 extras，
+# 保证 `uv sync` 后 `import nailong` 与 `nailong help` 立刻可用。
+dependencies = [
+    "numpy",
+    "soundfile",
+]
+
+[project.optional-dependencies]
+# 分离阶段：mp4 -> 人声轨
+sep = ["demucs"]
+# 切句 / 声纹阶段
+spk = ["torch", "speechbrain", "scikit-learn"]
+# 转写与 FunASR 声纹对比
+asr = ["funasr"]
+# 主动学习标注（PyPI 包名是 scikit-activeml，导入名才是 skactiveml）
+active = ["scikit-activeml", "scikit-learn"]
+all = ["demucs", "torch", "speechbrain", "scikit-learn", "funasr", "scikit-activeml"]
+
+[project.scripts]
+nailong = "nailong.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nailong", "tts/nailong_tts"]
+
+[tool.uv.workspace]
+members = ["tts"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# 阶段模块是脚本式的：模块级就执行，导入顺序不影响正确性
+"src/nailong/stages/*.py" = ["E402"]
