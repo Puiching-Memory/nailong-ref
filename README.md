@@ -16,7 +16,7 @@
 | `tts/`                | 数据集打包 + 引擎接口（独立包 `nailong-tts`）                                                                                                                 |
 | `game/prototype/`     | 两个 canvas 原型（冻结）                                                                                                                                      |
 | `tools/vid-analysis/` | 另一支视频结构分析（与主链路无关；截图与音轨不入库）                                                                                                          |
-| `docs/`               | 管线说明与实验结论                                                                                                                                            |
+| `docs/`               | 管线说明、实验结论与当前待解问题                                                                                                                              |
 | `data/`               | 运行时可再生的中间产物，**不入库**                                                                                                                            |
 
 ## 快速开始
@@ -112,3 +112,7 @@ nailong-tts pack            # 打包成训练格式
 声纹路线在这批素材上踩过的坑（换更强模型不等于能分开、短句嵌入不可靠、
 低频占比不能当 BGM 判据）记在 [docs/FINDINGS.md](docs/FINDINGS.md)，
 动手前先看，避免重复投入。
+
+若要继续扩数据集或换 TTS 模型，先看 [docs/ISSUES.md](docs/ISSUES.md)——
+源素材仅 4.53 分钟、产出率已达 27.7%、ground truth 只有 2 条人工标注，
+在动手前这些是硬约束。
