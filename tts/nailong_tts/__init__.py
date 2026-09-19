@@ -1,13 +1,18 @@
 """奶龙音色 TTS。
 
-本期只做两件事：
+分两侧：
 
-1. **数据集打包**（`dataset.py`）——把 `dataset/final/` 整理成训练器认的格式，
-   并做质检（清单/磁盘一致性、时长漂移、缺台词）。
-2. **推理接口预留**（`engine.py`）——固定下游小游戏要用的调用面，
-   用一个可运行的 `NullEngine` 占位，换引擎时不动调用方。
+**构建期**（需要外部 GPT-SoVITS 环境，见 `synth.py` 模块头）
+- `corpus.py` —— 封闭词表 + 穷举式模板，游戏台词的全部来源
+- `synth.py`  —— 把词表离线批量合成成 wav（`tts/assets/voice/`）
 
-引擎本身尚未选型，原因见 `tts/README.md`。
+**运行期**（只用本包依赖，不加载任何模型）
+- `bank.py`   —— 按 line_id 查预合成 wav 的引擎，游戏唯一该用的实现
+- `engine.py` —— 引擎契约与 `NullEngine` 占位
+
+`dataset.py` 是把 `dataset/final/` 打包给训练器用的，与推理无关。
 """
 
-__version__ = "0.1.0"
+from . import bank as _bank  # noqa: F401  导入即注册 "bank" 引擎
+
+__version__ = "0.2.0"
