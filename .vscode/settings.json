@@ -1,5 +1,6 @@
 {
   "python.defaultInterpreterPath": ".venv/Scripts/python.exe",
   "python.testing.pytestEnabled": false,
-  "files.eol": "\n"
+  "files.eol": "\n",
+  "cmake.sourceDirectory": "${workspaceFolder}/native"
 }

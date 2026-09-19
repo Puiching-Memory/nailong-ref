@@ -8,6 +8,7 @@
 # 文本资产强制 LF，避免 Windows CRLF 污染 CSV 与脚本
 *.csv  text eol=lf
 *.py   text eol=lf
+uv.lock text eol=lf
 *.toml text eol=lf
 *.md   text eol=lf
 *.html text eol=lf

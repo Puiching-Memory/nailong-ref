@@ -19,6 +19,21 @@ tools/vid-analysis/audio_*.wav
 
 # tts 打包产物（含机器相关的绝对路径）
 tts/build/
+# 注意：tts/assets/ 下的预合成语音**要入库**。它是游戏运行期真正读的资源，
+# 体积小（几十条 wav 约几 MB）且不含机器相关路径；入库后没装 ML 栈的机器也能直接跑。
+# 生成脚本与词表：tts/nailong_tts/{corpus,synth}.py
+
+# ---- native/：第三方 SDK 与构建产物都不入库 ----
+# third_party 里是 ONNX Runtime / TensorRT 的官方发行包和头文件检出，体积大且可重新获取
+native/build/
+native/third_party/
+# gsv 是导出/基准的暂存区：ONNX 模型、引擎缓存、日志，全部可重建
+native/gsv/
+# WinML 探针的 .NET 构建产物、TRT 引擎缓存、脚本合成的测试模型
+native/tests/**/bin/
+native/tests/**/obj/
+native/tests/_trt_engine_cache/
+native/tests/_gsv_*.onnx
 
 # ---- Python ----
 __pycache__/
@@ -32,6 +47,8 @@ venv/
 
 # ---- Node（game 若启用）----
 node_modules/
+# dist/ 也覆盖 game/dist/nailong.html —— 那是 `nailong-tts bundle` 的单文件发布版
+# （语音 base64 内联，可由 tts/assets/voice 重建），不入库
 dist/
 
 # ---- 编辑器 / 系统 ----
