@@ -94,7 +94,8 @@ nailong-tts bundle                  # 语音库内联进游戏 -> game/dist/nail
 
 `tts/assets/voice/` 现只有 **14 条**（12 材质 + `form0`/`form1`），
 `voice_manifest.csv` 还没生成过（`nailong-tts bank` 会因此报缺清单）。
-补齐跑一次 `nailong-tts synth` 即可。注意 `tts/assets/` 目前**未入库**。
+补齐跑一次 `nailong-tts synth` 即可。`tts/assets/` 已入库（LFS，体积小，
+不含机器相关路径，没装 ML 栈的机器也能直接跑）。
 
 ## 现有语料
 
