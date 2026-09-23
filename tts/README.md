@@ -26,7 +26,7 @@ C++20，见 `native/`）。调研到"社区先例全部可用、自研只剩工�
   结论与证据见 `docs/FINDINGS.md`）
 
 音色走**零样本克隆**：`pengyichen/NaiLong-Voice-Clone` 的 GPT/SoVITS 权重
-（微调自奶龙）已在本地，参考音频从 `dataset/final/` 里挑。
+（微调自奶龙）已在本地。新合成必须显式提供已听音复核的参考音频与逐字文本。
 
 ## 离线预合成
 
@@ -47,14 +47,12 @@ nailong-tts bundle                  # 语音库内联进游戏 -> game/dist/nail
 | `NAILONG_GSV_REPO` | `C:\workspace\github\GPT-SoVITS_minimal_inference` |
 | `NAILONG_GSV_ONNX` | `native/gsv/onnx_out` |
 | `NAILONG_GSV_BERT` | `native/gsv/chinese-roberta-wwm-ext-large` |
-| `NAILONG_GSV_REF` | `dataset/final/src_06_14.22-22.22.wav` |
-| `NAILONG_GSV_REF_TEXT` | 上面那条的文本 |
+| `NAILONG_GSV_REF` | 无；必须显式设置已听音核对的参考音频 |
+| `NAILONG_GSV_REF_TEXT` | 无；必须显式设置对应的逐字文本 |
 | `NAILONG_GSV_SEED` | 不设；设了固定随机种子，韵律可复现 |
 
-参考音频用 **8.00s 那条**不是随便挑的：实测同一句 probe 换 5 条参考，
-8.00s 的 `src_06` 声纹一致度 0.7562，高于同长度对照的中位 0.7396；
-而 4.28s 的 `src_05` 只有 0.6696，低于对照 p5 0.7129。
-复现：`native/tests/ref_sweep.py`、`native/tests/voice_id_check.py`。
+当前正式复核清单没有获批准片段，所以仓库不指定默认参考。
+`src_07` 仅由音频模型接受，且视觉证据不完整，不能自动当作已核对参考。
 
 ## 封闭词表
 
@@ -99,20 +97,25 @@ nailong-tts bundle                  # 语音库内联进游戏 -> game/dist/nail
 
 ## 现有语料
 
-`dataset/final/` 共 11 段、**75.3s**，单段 4.28-8.00s，全部是连续干净片段：
+`dataset/production/accepted/` 共 21 段、**97.16s**，仅是自动候选：
 
-- 来源：B 站奶龙短剧 9 集，demucs 分离人声轨后 VAD 切句，
-  再用 ReDimNet 长参考打分 + 两遍迭代选出「组A = 奶龙」。
-- 质量门槛：段内每句的 `simA ≥ 0.62`（低于此值句子里已确认混入其他角色）。
-- 导出时加 `highpass=f=80` 压掉分离残留的低频伴奏；实测伴奏比人声低 8.7dB。
+- 说话人：2 段由画面确认；19 段由视觉校准后的 ERes2NetV2 保守阈值接受。
+- 音质：同窗口 `RMS(vocals)-RMS(no_vocals) ≥ 15dB`，并加 80Hz 高通。
+- 另有 31 段 / 159.50s 因残留 BGM/SFX 进入 `quarantine/`，打包器不会读取。
 
-75s 处于音色克隆的经验下限附近：够做零样本/少样本微调，
-但**不够自训**，且情感覆盖很窄（素材里主要是😡/😊/😮三种）。
+视觉复核已拒绝 6 段 / 32.52s；另 15 段 / 64.64s 待听音，当前没有获批准训练片段。
 
 ## 打包
 
+正式训练包先运行 `nailong-tts review`，逐段听音、修正文本、确认目标说话人和残留音效，
+再在 `dataset/manifests/training_review.csv` 填 `approved=yes`。`nailong-tts audit`
+对音频哈希、24kHz/单声道/PCM16、时长、静音、削波、复核状态及语料量作硬门禁。
+不足 200 段或 30 分钟时 `pack` 会失败并清除旧的训练列表；要做小样本调试可用
+`pack --experimental`，但逐段复核依旧必需。
+
 ```bash
-nailong finalize              # 若还没有 final_manifest.csv；完整跑需先 nailong separate
+nailong calibrate-visual
+nailong prepare-production
 nailong-tts pack              # -> tts/build/{filelist.txt, metadata.csv}
 nailong-tts stats             # 只跑质检不写文件
 ```

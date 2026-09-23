@@ -5,12 +5,12 @@
 模型就更准一次；已标过的样本永远不会再问你。
 
 标签分两档：
-  human —— 你亲口判定的，最高权威，永远覆盖 weak
-  weak  —— 自动方法给的弱标签，只用于冷启动，会被你的标注逐步纠正
+  human  —— 你亲口判定的，最高权威
+  visual —— 音视频对齐后逐句目视确认，仅次于 human
 
 用法::
 
-    nailong annotate seed          初始化（human 种子 + weak 弱标签）
+    nailong annotate seed          从 human 种子 + visual 真值重建标签
     nailong annotate status        看当前模型状态与人机一致度
     nailong annotate query [N]     挑 N 句最该由你判定，导出试听带
     nailong annotate teach 12:1 47:0   录入判定（1=奶龙, 0=不是, 2=有音效不能用）
@@ -32,27 +32,27 @@ LABELS_CSV = config.LABELS
 REEL = config.REELS / "q_reel.wav"
 MISSING = -1
 CAND = 40                          # 先按不确定性取候选池，再用 CoreSet 在其中挑多样性样本
-WEAK_K = config.WEAK_K             # 自动方法在两端各取多少句作为弱标签冷启动
 MIN_DUR = config.MIN_ASK_DUR       # 只提问长于此的句子：更短的人耳也分不出说话人
 # 你已亲口判定的种子（#15 你确认是奶龙；#2 你判定错误说话人）
 HUMAN_SEED = config.HUMAN_SEED
 
 rows = manifests.by_idx(config.UTT_MANIFEST)
 svr = manifests.by_idx(config.SV_ALL)
-tp = manifests.by_idx(config.TWO_PASS)
 IDS = sorted(rows)
 POS = {i: k for k, i in enumerate(IDS)}
-X = l2norm(np.load(config.EMB_REDIMNET))
-margin = {i: float(tp[i]["simA"]) - float(tp[i]["simB"]) for i in IDS}
+X = l2norm(np.load(config.EMB_ERES2NETV2))
 
 
 def load_labels():
     lab, src = {}, {}
+    priority = {"visual": 1, "human": 2}
     if LABELS_CSV.exists():
         for r in csv.DictReader(open(LABELS_CSV, encoding="utf-8")):
             i = int(r["idx"])
-            if src.get(i) == "human" and r["source"] != "human":
-                continue          # human 优先
+            if r["source"] not in priority:
+                raise ValueError(f"不支持的标签来源 {r['source']!r}；只允许 human / visual")
+            if priority.get(src.get(i, ""), 0) > priority.get(r["source"], 0):
+                continue
             lab[i], src[i] = int(r["label"]), r["source"]
     return lab, src
 
@@ -81,16 +81,14 @@ def cmd_seed():
     lab, src = load_labels()
     for i, v in HUMAN_SEED.items():
         lab[i], src[i] = v, "human"
-    order = sorted(IDS, key=lambda i: -margin[i])
-    for i in order[:WEAK_K]:
-        if i not in lab:
-            lab[i], src[i] = 1, "weak"
-    for i in order[-WEAK_K:]:
-        if i not in lab:
-            lab[i], src[i] = 0, "weak"
+    for row in manifests.read(config.VISUAL_LABELS):
+        i = int(row["idx"])
+        if src.get(i) != "human":
+            lab[i], src[i] = int(row["label"]), "visual"
     save_labels(lab, src)
     nh = sum(1 for v in src.values() if v == "human")
-    print(f"已初始化 {LABELS_CSV}: human {nh} 条, weak {len(lab) - nh} 条, "
+    nv = sum(1 for v in src.values() if v == "visual")
+    print(f"已初始化 {LABELS_CSV}: human {nh} 条, visual {nv} 条, "
           f"未标注 {len(IDS) - len(lab)} 条")
 
 
@@ -98,8 +96,9 @@ def cmd_status():
     lab, src = load_labels()
     y = y_vector(lab)
     nh = sum(1 for v in src.values() if v == "human")
+    nv = sum(1 for v in src.values() if v == "visual")
     nsfx = sum(1 for i, v in lab.items() if v == 2)
-    print(f"标注进度: human {nh} / weak {len(lab) - nh} / 未标 {len(IDS) - len(lab)}"
+    print(f"标注进度: human {nh} / visual {nv} / 未标 {len(IDS) - len(lab)}"
           f"  (共 {len(IDS)})" + (f"  音效污染 {nsfx} 句" if nsfx else ""))
     if (y != MISSING).sum() < 4:
         print("标注太少，无法训练。先跑 query 再 teach。")
@@ -107,9 +106,9 @@ def cmd_status():
     clf = make_clf().fit(X, y)
     p = clf.predict_proba(X)[:, 1]
     # 人机一致度：只看 human，模型不知道这些标签时是否也认同
-    hs = [POS[i] for i, s in src.items() if s == "human"]
+    hs = [POS[i] for i, s in src.items() if s in ("human", "visual")]
     agree = sum(1 for k in hs if (p[k] > 0.5) == (lab[IDS[k]] == 1))
-    print(f"人机一致度 (仅看 human 标注): {agree}/{len(hs)}")
+    print(f"人机一致度 (human + visual): {agree}/{len(hs)}")
     pred = (p > 0.5).astype(int)
     print(f"预测为奶龙: {pred.sum()} 句")
     return lab, src, clf, p
@@ -123,7 +122,7 @@ def cmd_query(n=12):
         return
     clf = make_clf().fit(X, y)
     unlabeled = np.array([POS[i] for i in IDS
-                          if (lab.get(i) is None or src.get(i) != "human")
+                          if lab.get(i) is None
                           and float(rows[i]["dur"]) >= MIN_DUR])
     if len(unlabeled) == 0:
         print("没有待判定的句子了。")

@@ -20,29 +20,26 @@ PRETRAINED = DATA / "pretrained"   # 声纹 / ASR 权重缓存
 
 # ---- 入库数据集 ----
 DATASET = ROOT / "dataset"
-SOURCES = DATASET / "sources"        # src_NN.mp4
+SOURCES = DATASET / "sources"        # src_NN.*（mp4/m4a 等 ffmpeg 可读容器）
 MANIFESTS = DATASET / "manifests"    # 跨阶段数据契约
 UTTERANCES = DATASET / "utterances"  # 细粒度切句
 QUERIES = DATASET / "queries"        # 主动学习提问批
-FINAL = DATASET / "final"            # 交付 TTS 的干净片段
+PRODUCTION = DATASET / "production"  # 视觉真值 + 残留伴奏门控后的生产片段
+CALIBRATION = DATASET / "calibration"  # 部署时直接加载的声纹原型与阈值
 EMBEDDINGS = DATASET / "embeddings"
 REELS = DATASET / "reels"
 
 # ---- 清单（唯一的跨阶段契约）----
-UTT_MANIFEST = MANIFESTS / "utt_manifest.csv"   # idx,src,t0,t1,dur,f0_med,centroid,cluster,reel_t
+UTT_MANIFEST = MANIFESTS / "utt_manifest.csv"   # idx,src,t0,t1,dur
 SV_ALL = MANIFESTS / "sv_all.csv"               # idx,src,t0,dur,event,emotion,text
-MARGIN_LONG = MANIFESTS / "utt_margin_long.csv"  # idx,src,t0,dur,sim_pos,sim_neg,margin
-TWO_PASS = MANIFESTS / "utt_two_pass.csv"       # idx,src,t0,dur,simA,simB,margin,group
 LABELS = MANIFESTS / "labels.csv"               # idx,label,source
-CHUNK_META = MANIFESTS / "chunk_meta.csv"       # idx,src,t0,dur,ci,ct0,cdur,text
 Q_BATCH = MANIFESTS / "q_batch.csv"             # order,idx,src,dur,p_nailong,text
-FINAL_MANIFEST = MANIFESTS / "final_manifest.csv"  # file,src,t0,t1,dur,min_simA,text
+VISUAL_LABELS = MANIFESTS / "visual_labels.csv"
+PRODUCTION_SCORES = MANIFESTS / "production_scores.csv"
+PRODUCTION_MANIFEST = MANIFESTS / "production_manifest.csv"
 
 EMB_REDIMNET = EMBEDDINGS / "emb_redimnet.npy"
-EMB_EPISODES = EMBEDDINGS / "emb_episodes.npy"
-EMB_CHUNKS = EMBEDDINGS / "emb_chunks.npy"
-
-SRCS = [f"src_{i:02d}" for i in range(1, 10)]
+EMB_ERES2NETV2 = EMBEDDINGS / "emb_eres2netv2.npy"
 
 # ---- 音频格式 ----
 SR_MODEL = 16_000    # 声纹模型输入采样率
@@ -57,18 +54,13 @@ MIN_UTT = 0.30                   # 最短句长
 MIN_SEG = 0.80                   # 提交给声纹的最短片段
 DB_THRESH, SP_THRESH = -45.0, 0.25
 
-# ---- 声纹打分 ----
-OUTLIER = "src_02"               # 30s 级即确认的另一说话人，全程排除
-ROUNDS = 3                       # 两遍迭代轮数
-MIN_A = 0.62                     # 组A 内部可信度截尾（低于此值已有人工反例）
+# ---- 生产片段 ----
 ADJ_GAP = 0.80                   # 相邻句合并成片段的最大间隔
 MIN_RUN, MAX_RUN = 3.0, 10.0     # 交付片段时长窗口
-ANCHORS = [11, 12, 13, 15]       # 早期人工锚点（仅供参考，已被证明跨说话人）
-SEG_SEP = " / "                  # finalize 标记段内语句边界，不是要读出来的字
+SEG_SEP = " / "                  # 段内语句边界，不是要读出来的字
 
 # ---- 主动学习 ----
 HUMAN_SEED = {15: 1, 2: 0}       # 用户亲口判定：15=奶龙, 2=另一说话人
-WEAK_K = 22                      # 自动方法两端各取多少句做冷启动
 MIN_ASK_DUR = 1.5                # 短于此的句子人耳也分不出，不问
 
 
@@ -97,15 +89,28 @@ def vocals_path(src: str) -> Path:
     return p
 
 
-def source_path(src: str) -> Path:
-    p = SOURCES / f"{src}.mp4"
+def no_vocals_path(src: str) -> Path:
+    """Demucs 的非人声轨；用于量化残留 BGM/SFX，不参与说话人识别。"""
+    p = SEP_OUT / "htdemucs" / src / "no_vocals.wav"
     if not p.exists():
-        raise FileNotFoundError(f"缺少源视频 {rel(p)}")
+        raise FileNotFoundError(f"缺少 {rel(p)}；先跑分离阶段：nailong separate")
     return p
+
+
+def source_path(src: str) -> Path:
+    matches = sorted(SOURCES.glob(f"{src}.*"))
+    if len(matches) != 1:
+        raise FileNotFoundError(f"源文件应恰好有一个 {rel(SOURCES / src)}.*，实际 {len(matches)} 个")
+    return matches[0]
+
+
+def source_names() -> list[str]:
+    """按编号返回当前本地源；容器格式可以是 mp4、m4a 或其他 ffmpeg 输入。"""
+    return sorted({path.stem for path in SOURCES.glob("src_*.*")})
 
 
 def ensure_dirs() -> None:
     """创建会写入的目录。各阶段入口调用一次即可，不必各自 makedirs。"""
     for d in (DATA, SEP_IN, SEP_OUT, PRETRAINED, MANIFESTS, UTTERANCES,
-              QUERIES, FINAL, EMBEDDINGS, REELS):
+              QUERIES, PRODUCTION, CALIBRATION, EMBEDDINGS, REELS):
         d.mkdir(parents=True, exist_ok=True)

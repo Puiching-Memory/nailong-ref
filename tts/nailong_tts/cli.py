@@ -1,7 +1,10 @@
 """nailong-tts 命令行。
 
     nailong-tts pack            打包训练数据 -> tts/build/
-    nailong-tts stats           只跑质检，不写文件
+    nailong-tts review          刷新待复核清单，保留哈希未变的人工修订
+    nailong-tts audit           正式训练门禁；失败返回非零
+    nailong-tts pack --experimental 仅豁免正式语料量门槛
+    nailong-tts stats           候选统计，不代表训练就绪
     nailong-tts engines         列出已注册引擎
     nailong-tts say "台词"      用占位引擎合成一段 wav，验证播放链路
     nailong-tts corpus          打印封闭词表统计并落成 csv
@@ -26,12 +29,27 @@ SAY_DIR = dataset.BUILD / "say"
 
 
 def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     argv = list(sys.argv[1:] if argv is None else argv)
     cmd = argv[0] if argv else "help"
 
     if cmd == "pack":
-        dataset.pack()
+        dataset.pack(experimental="--experimental" in argv)
         return 0
+
+    if cmd == "review":
+        from . import quality
+
+        quality.make_review()
+        return 0
+
+    if cmd == "audit":
+        from . import quality
+
+        result = quality.audit()
+        quality.print_audit(result)
+        return 0 if not result.issues else 1
 
     if cmd == "stats":
         dataset.report(dataset.load())
@@ -72,9 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         only: set[str] | None = None
         if "--only" in argv:
             only = {s.strip() for s in argv[argv.index("--only") + 1].split(",") if s.strip()}
-        lines = [l for l in corpus.load() if only is None or l.line_id in only]
+        lines = [line for line in corpus.load() if only is None or line.line_id in only]
         if only is not None and len(lines) != len(only):
-            known = {l.line_id for l in corpus.load()}
+            known = {line.line_id for line in corpus.load()}
             print(f"未知 line_id: {sorted(only - known)}", file=sys.stderr)
             return 2
         synth.synthesize(lines, corpus.VOICE_DIR, force=force)

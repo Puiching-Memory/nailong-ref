@@ -10,7 +10,7 @@
 - `bank.py`   —— 按 line_id 查预合成 wav 的引擎，游戏唯一该用的实现
 - `engine.py` —— 引擎契约与 `NullEngine` 占位
 
-`dataset.py` 是把 `dataset/final/` 打包给训练器用的，与推理无关。
+`dataset.py` 是把 `dataset/production/accepted/` 打包给训练器用的，与推理无关。
 """
 
 from . import bank as _bank  # noqa: F401  导入即注册 "bank" 引擎

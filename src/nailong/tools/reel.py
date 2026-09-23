@@ -12,8 +12,8 @@ import soundfile as sf
 
 from .. import config
 
-SRC = Path(sys.argv[1]) if len(sys.argv) > 1 else config.FINAL
-OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else config.REELS / "final_reel.wav"
+SRC = Path(sys.argv[1]) if len(sys.argv) > 1 else config.PRODUCTION / "accepted"
+OUT = Path(sys.argv[2]) if len(sys.argv) > 2 else config.REELS / "production_reel.wav"
 GAP = 1.0
 parts, marks = [], []
 pos = 0.0

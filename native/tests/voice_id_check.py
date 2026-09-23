@@ -4,18 +4,16 @@
 拿与训练同源的 `sv_embedding.onnx` 给每段音频取 192 维嵌入，L2 归一化后算余弦。
 
 判据是**相对**的，不是绝对阈值：
-  - 先把 11 段参考音频互相之间的余弦分布测出来（这是同一个说话人的"自相似区间"）
+  - 先把已听音批准参考音频互相之间的余弦分布测出来
   - 再看合成片段到这些参考的余弦落在什么位置
   - 落在区间内 => 音色没跑偏；明显低于区间下沿 => 音色不对
 
 跑法：
-    python native/tests/voice_id_check.py [要校验的 wav ...]
-不给参数则校验 native/gsv/_smoke.wav。
+    python native/tests/voice_id_check.py 要校验的.wav [更多.wav ...]
 """
 
 from __future__ import annotations
 
-import csv
 import os
 import sys
 from pathlib import Path
@@ -23,9 +21,13 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "src"))
+sys.path.insert(0, str(REPO / "tts"))
+
+from nailong_tts import quality  # noqa: E402
+
 ONNX_DIR = Path(os.environ.get("NAILONG_GSV_ONNX", REPO / "native" / "gsv" / "onnx_out"))
-FINAL_DIR = REPO / "dataset" / "final"
-MANIFEST = REPO / "dataset" / "manifests" / "final_manifest.csv"
+PRODUCTION_DIR = REPO / "dataset" / "production"
 SR = 16_000
 
 
@@ -61,16 +63,22 @@ def upper_tri(m: np.ndarray) -> np.ndarray:
 
 
 def main(argv: list[str]) -> int:
-    import onnxruntime
-
-    targets = [Path(p) for p in argv] or [REPO / "native" / "gsv" / "_smoke.wav"]
+    if not argv:
+        print("usage: python native/tests/voice_id_check.py <wav> [wav ...]", file=sys.stderr)
+        return 2
+    targets = [Path(p) for p in argv]
     for t in targets:
         if not t.exists():
             print(f"missing: {t}", file=sys.stderr)
             return 2
 
-    names = [r["file"] for r in csv.DictReader(MANIFEST.open(encoding="utf-8"))]
-    refs = [FINAL_DIR / n for n in names]
+    rows = [row for row, _ in quality.audit(min_seconds=0, min_clips=0).usable]
+    if len(rows) < 2:
+        print("至少需要 2 段已听音批准的参考音频；先完成 training_review.csv", file=sys.stderr)
+        return 2
+    import onnxruntime
+    names = [r["file"] for r in rows]
+    refs = [PRODUCTION_DIR / n for n in names]
     missing = [r for r in refs if not r.exists()]
     if missing:
         print(f"missing {len(missing)} reference clip(s), e.g. {missing[0]}", file=sys.stderr)

@@ -1,121 +1,91 @@
-"""VAD 细粒度切句：导出单句 wav + 试听带 + 清单，供人工判断哪句是奶龙。
+"""对新分离源做 VAD 切句，并追加到稳定的句级主键空间。
 
-判据是「帧 RMS + 语音频段占比」双阈值，前后各留 60ms 保住字头字尾。
-GAP_TOL 偏松会把相邻不同说话人的台词并成一句——这是后续声纹聚类
-拿不到簇结构的主因之一（用 embed-chunk 可以量化混句程度）。
+默认只处理 ``utt_manifest.csv`` 中尚未出现的源。已有句子的 idx 永不重排，因而
+扩数据时不会破坏视觉校准标签。VAD 只负责候选切句；说话人判断由后续校准模型完成。
 """
+
 from __future__ import annotations
 
-import logging
+import sys
 
 import numpy as np
 import soundfile as sf
-import torch
-from sklearn.cluster import AgglomerativeClustering
-from sklearn.metrics import silhouette_score
-from speechbrain.inference.speaker import EncoderClassifier
 
 from .. import audio, config, manifests
-from ..speakers import l2norm
 
-logging.getLogger("speechbrain").setLevel(logging.ERROR)
-
-SR = config.SR_MODEL
-FL, HOP = config.FRAME, config.HOP
-HOP_T = HOP / SR
-GAP_TOL, MIN_UTT = config.GAP_TOL, config.MIN_UTT
-OUT = config.UTTERANCES
-SP_FMIN, SP_FMAX = 250, 4000      # 语音能量集中区，用来和 BGM/音效区分
-CEN_FMIN, CEN_FMAX = 80, 8000     # 谱质心统计带
-
-UTT_FIELDS = ["idx", "src", "t0", "t1", "dur", "f0_med", "centroid", "cluster", "reel_t"]
+SP_FMIN, SP_FMAX = 250, 4000
+FIELDS = ["idx", "src", "t0", "t1", "dur"]
 
 
-def feat(x):
-    """返回 (帧 dBFS, 语音频段占比, 谱质心)，逐帧。"""
-    F = audio.frame_matrix(x, FL, HOP)
-    S = audio.spectrum(F)
-    f = audio.freqs(FL, SR)
-    return (audio.frame_db(F),
-            audio.band_ratio(S, f, SP_FMIN, SP_FMAX),
-            audio.spectral_centroid(S, f, CEN_FMIN, CEN_FMAX))
+def detect(wave: np.ndarray) -> list[tuple[float, float, np.ndarray]]:
+    frames = audio.frame_matrix(wave, config.FRAME, config.HOP)
+    if frames is None:
+        return []
+    spectrum = audio.spectrum(frames)
+    freqs = audio.freqs(config.FRAME, config.SR_MODEL)
+    mask = ((audio.frame_db(frames) > config.DB_THRESH) &
+            (audio.band_ratio(spectrum, freqs, SP_FMIN, SP_FMAX) > config.SP_THRESH))
+    hop_seconds = config.HOP / config.SR_MODEL
+    ranges: list[tuple[int, int]] = []
+    start = last = None
+    for number, active in enumerate(mask):
+        if active:
+            if start is None:
+                start = number
+            last = number
+        elif start is not None and (number - last) * hop_seconds > config.GAP_TOL:
+            ranges.append((start, last + 1))
+            start = last = None
+    if start is not None:
+        ranges.append((start, last + 1))
 
-
-def segs(mask):
-    out, s, last = [], None, None
-    for i, v in enumerate(mask):
-        if v:
-            if s is None:
-                s = i
-            last = i
-        elif s is not None and (i - last) * HOP_T > GAP_TOL:
-            out.append((s, last + 1))
-            s = None
-    if s is not None:
-        out.append((s, last + 1))
-    return [(a, b) for a, b in out if (b - a) * HOP_T >= MIN_UTT]
-
-
-def f0_med(x):
-    return audio.f0_median(x, SR, FL, HOP)
-
-
-config.ensure_dirs()
-spk = EncoderClassifier.from_hparams(source="speechbrain/spkrec-ecapa-voxceleb",
-                                     savedir=str(config.PRETRAINED / "ecapa"))
-
-recs = []
-for src in config.SRCS:
-    x = audio.decode(config.vocals_path(src), SR, dtype="float64")
-    db, sp, cen = feat(x)
-    for a, b in segs((db > config.DB_THRESH) & (sp > config.SP_THRESH)):
-        i0, i1 = a * HOP, b * HOP
-        seg = x[i0:i1]
-        if len(seg) < int(config.MIN_SEG * SR):
+    pad = round(config.SEG_PAD * config.SR_MODEL)
+    found = []
+    for first, final in ranges:
+        t0, t1 = first * hop_seconds, final * hop_seconds
+        if t1 - t0 < config.MIN_SEG:
             continue
-        pad = int(config.SEG_PAD * SR)
-        s = x[max(0, i0 - pad):min(len(x), i1 + pad)]
-        with torch.no_grad():
-            e = spk.encode_batch(torch.from_numpy(seg).float().unsqueeze(0)).squeeze().numpy()
-        recs.append(dict(src=src, a=a * HOP_T, b=b * HOP_T, dur=len(s) / SR,
-                         f0=f0_med(seg), cen=float(np.median(cen[a:b])), emb=e, wav=s))
+        i0, i1 = first * config.HOP, final * config.HOP
+        clip = wave[max(0, i0 - pad):min(len(wave), i1 + pad)]
+        found.append((t0, t1, clip))
+    return found
 
-E = l2norm(np.array([r["emb"] for r in recs]))
-print(f"共 {len(recs)} 句")
-for k in (2, 3, 4):
-    lab = AgglomerativeClustering(n_clusters=k, metric="cosine", linkage="average").fit_predict(E)
-    print(f"  k={k} silhouette={silhouette_score(E, lab, metric='cosine'):.3f} 簇大小={list(np.bincount(lab))}")
 
-lab = AgglomerativeClustering(n_clusters=2, metric="cosine", linkage="average").fit_predict(E)
-for r, c in zip(recs, lab, strict=True):
-    r["cluster"] = int(c)
+def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    requested = list(sys.argv[1:] if argv is None else argv)
+    config.ensure_dirs()
+    existing = manifests.read(config.UTT_MANIFEST) if config.UTT_MANIFEST.exists() else []
+    done = {row["src"] for row in existing}
+    available = config.source_names()
+    srcs = requested or [src for src in available if src not in done]
+    unknown = sorted(set(srcs) - set(available))
+    repeated = sorted(set(srcs) & done)
+    if unknown:
+        raise SystemExit(f"没有这些源文件: {unknown}")
+    if repeated:
+        raise SystemExit(f"这些源已经切句，拒绝产生重复 idx: {repeated}")
+    if not srcs:
+        print("没有待追加的新源")
+        return 0
 
-GAP_S = 0.6                       # 试听带段间静音
-REEL = config.REELS / "utt_reel.wav"
+    next_idx = max((int(row["idx"]) for row in existing), default=0) + 1
+    added = []
+    for src in srcs:
+        wave = audio.decode(config.vocals_path(src), config.SR_MODEL, dtype="float64")
+        clips = detect(wave)
+        for t0, t1, clip in clips:
+            idx = next_idx
+            next_idx += 1
+            sf.write(str(config.UTTERANCES / f"utt_{idx:03d}.wav"), clip, config.SR_MODEL)
+            added.append([idx, src, f"{t0:.2f}", f"{t1:.2f}", f"{len(clip) / config.SR_MODEL:.2f}"])
+        print(f"{src}: +{len(clips)} 句", flush=True)
 
-order = sorted(range(len(recs)), key=lambda i: recs[i]["f0"])
-gap = np.zeros(int(GAP_S * SR))
-reel, marks = [], []
-pos = 0.0
-print(f"\n{'#':>4}{'源':>9}{'起点':>8}{'时长':>7}{'F0':>6}{'质心':>7}{'簇':>4}{'reel':>8}")
-for n, i in enumerate(order, 1):
-    r = recs[i]
-    r["idx"] = n
-    sf.write(str(OUT / f"utt_{n:03d}.wav"), r["wav"], SR)
-    marks.append((n, pos))
-    reel += [r["wav"], gap]
-    pos += len(r["wav"]) / SR + GAP_S
-    print(f"{n:>4}{r['src']:>9}{r['a']:>8.2f}{r['dur']:>7.2f}"
-          f"{r['f0']:>6.0f}{r['cen']:>7.0f}{r['cluster']:>4}{marks[-1][1]:>8.2f}")
+    preserved = [[row[field] for field in FIELDS] for row in existing]
+    manifests.write(config.UTT_MANIFEST, FIELDS, [*preserved, *added])
+    print(f"追加 {len(added)} 句；总计 {len(existing) + len(added)} 句 -> {config.rel(config.UTT_MANIFEST)}")
+    return 0
 
-sf.write(str(REEL), np.concatenate(reel), SR)
-reel_t = dict(marks)
-manifests.write(config.UTT_MANIFEST, UTT_FIELDS, [
-    [recs[i]["idx"], recs[i]["src"], manifests.f2(recs[i]["a"]), manifests.f2(recs[i]["b"]),
-     manifests.f2(recs[i]["dur"]), f"{recs[i]['f0']:.0f}", f"{recs[i]['cen']:.0f}",
-     recs[i]["cluster"], manifests.f2(reel_t[recs[i]["idx"]])]
-    for i in order])
 
-print(f"\n单句: {config.rel(OUT)}/utt_NNN.wav   "
-      f"试听带: {config.rel(REEL)} ({pos:.1f}s)")
-print(f"清单: {config.rel(config.UTT_MANIFEST)}")
+if __name__ == "__main__":
+    raise SystemExit(main())

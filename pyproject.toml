@@ -19,8 +19,9 @@ sep = ["demucs"]
 spk = ["torch", "speechbrain", "scikit-learn"]
 # 转写与 FunASR 声纹对比
 asr = ["funasr"]
-# 主动学习标注（PyPI 包名是 scikit-activeml，导入名才是 skactiveml）
+# 基于视觉真值启动的主动学习标注（PyPI 包名 scikit-activeml）
 active = ["scikit-activeml", "scikit-learn"]
+source = ["yt-dlp"]
 all = ["demucs", "torch", "speechbrain", "scikit-learn", "funasr", "scikit-activeml"]
 
 [project.scripts]

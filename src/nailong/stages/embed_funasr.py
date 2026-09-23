@@ -49,9 +49,7 @@ out.parent.mkdir(parents=True, exist_ok=True)
 np.save(out, E)
 print(f"嵌入 {E.shape} -> {config.rel(out)}", flush=True)
 
-oi = {int(r["idx"]): i for i, r in enumerate(rows)}
 En = speakers.l2norm(E)
-print("原锚点两两余弦: " + speakers.anchor_cosines(En, oi))
-A = config.ANCHORS
-pair = [En[oi[a]] @ En[oi[b]] for i, a in enumerate(A) for b in A[i + 1:]]
-print(f"锚点整体均值: {np.mean(pair):.3f}   (cam++=0.556, ERes2NetV2=0.615)")
+print(f"全体两两余弦: 中位={np.median(En @ En.T):.3f} "
+      f"p10={np.percentile(En @ En.T, 10):.3f} "
+      f"p90={np.percentile(En @ En.T, 90):.3f}")

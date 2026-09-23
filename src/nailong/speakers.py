@@ -2,9 +2,8 @@
 
 两条来源合并到一处，避免每个脚本各自重复 `torch.hub.load` 与 `embed()`：
 
-- ReDimNet：Vox1-O EER 0.53%（ft_mix 权重含 CN-Celeb），本素材上最强的中文模型。
-  FunASR 只注册了 CAMPPlus / ERes2NetV2，要上更强模型必须走 torch.hub。
-- FunASR：用于 CAMPPlus / ERes2NetV2 的横向对比与短句嵌入。
+- ReDimNet：Vox1-O EER 0.53%（ft_mix 权重含 CN-Celeb），作为生产判定的审计旁证。
+- FunASR：用于 CAMPPlus / ERes2NetV2 的横向对比。
 
 重依赖（torch / funasr）全部惰性导入，保证 `import nailong` 无 GPU 也能成功。
 """
@@ -15,7 +14,6 @@ from pathlib import Path
 
 import numpy as np
 
-from . import config
 from .audio import Decoder
 
 REDIMNET_REPO = "IDRnD/ReDimNet"
@@ -75,11 +73,3 @@ def l2norm(E: np.ndarray) -> np.ndarray:
     if E.ndim == 1:
         return E / (np.linalg.norm(E) + 1e-9)
     return E / (np.linalg.norm(E, axis=1, keepdims=True) + 1e-9)
-
-
-def anchor_cosines(En: np.ndarray, pos_of: dict[int, int]) -> str:
-    """早期人工锚点的两两余弦。锚点内部一致性高只说明它们同源，
-    不代表它们都是奶龙——实测这 4 个锚点本身已跨说话人。"""
-    A = config.ANCHORS
-    return "  ".join(f"#{a}-#{b}={En[pos_of[a]] @ En[pos_of[b]]:.3f}"
-                     for i, a in enumerate(A) for b in A[i + 1:])

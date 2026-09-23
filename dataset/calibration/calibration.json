@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "policy": "visual calibration offline; audio-only inference; non_speech excluded from other-speaker centroid",
+  "counts": {
+    "target": 14,
+    "other_speaker": 7,
+    "non_speech": 1
+  },
+  "models": {
+    "redimnet": {
+      "id": "IDRnD/ReDimNet M ft_mix vb2+vox2+cnc",
+      "weights_sha256": "1e0716c2f351e79df054554f17c525b899045d2d05e4c839208b975e87d94e6a"
+    },
+    "eres2netv2": {
+      "id": "iic/speech_eres2netv2_sv_zh-cn_16k-common",
+      "weights_sha256": "0eb4057106b2573dd7b132cf0c36273ab29afd192c1610f80baa9c556dbb963c"
+    }
+  },
+  "scoring": {
+    "primary": "eres2netv2",
+    "formula": "(primary_margin - mean) / std",
+    "selection": "highest leave-one-video-out AUC",
+    "normalization": {
+      "mean": 0.03419338503435056,
+      "std": 0.11926058895996626
+    }
+  },
+  "ensemble_diagnostic": {
+    "formula": "mean((margin - mean) / std)",
+    "normalization": {
+      "redimnet": {
+        "mean": 0.03995424854549315,
+        "std": 0.1401812608516503
+      },
+      "eres2netv2": {
+        "mean": 0.03419338503435056,
+        "std": 0.11926058895996626
+      }
+    },
+    "used_for_decision": false
+  },
+  "thresholds": {
+    "accept": 0.2282925318747988,
+    "reject": -0.8520782902741113,
+    "balanced": 0.2282925318747988,
+    "zero_observed_fpr": 0.14564936100581843,
+    "source": "max(zero-observed-FPR boundary, balanced threshold) on leave-one-video-out predictions"
+  },
+  "validation": {
+    "redimnet": {
+      "auc_leave_one_video_out": 0.7053571428571429,
+      "threshold": 0.08876491245323859,
+      "recall": 0.5714285714285714,
+      "fpr": 0.125,
+      "balanced_accuracy": 0.7232142857142857
+    },
+    "eres2netv2": {
+      "auc_leave_one_video_out": 0.7589285714285714,
+      "threshold": 0.06141968684090093,
+      "recall": 0.7142857142857143,
+      "fpr": 0.0,
+      "balanced_accuracy": 0.8571428571428572
+    },
+    "ensemble_diagnostic": {
+      "auc_leave_one_video_out": 0.6875,
+      "threshold": -0.12511615413073723,
+      "recall": 0.7142857142857143,
+      "fpr": 0.25,
+      "balanced_accuracy": 0.7321428571428572
+    }
+  },
+  "inputs": {
+    "dataset/manifests/visual_labels.csv": "cf40366b20eda9f9bdb20857f288a41434d00bb076f3d689ae8f0089bb907add",
+    "dataset/embeddings/emb_redimnet.npy": "6471e1734eeef603061648e971a3fde5b8ac360c6915b5a19dbf22b1b0b906a0",
+    "dataset/embeddings/emb_eres2netv2.npy": "eb2129785923ec66259e5ae64613f0da53e04939103513a8e4f839a061aa39af"
+  },
+  "artifacts": {
+    "dataset/calibration/eres2netv2_other_centroid.npy": "2c5790b5876ffaafad23a5d3e1810dd838a9df40fd820fa82964a784013c0e9e",
+    "dataset/calibration/eres2netv2_target_centroid.npy": "3647dd8062ab548b325d598b043f4fefea210b24154eabe38d13890c8f928a71",
+    "dataset/calibration/redimnet_other_centroid.npy": "93b486ad0134f138d071d6330437c227c261fa8b15d3ab2ff6f70de2b35e1f40",
+    "dataset/calibration/redimnet_target_centroid.npy": "961910399a2eb7cdcf0bfc86389d93978e8d0f54d92baa812484e4006c1a082a"
+  }
+}

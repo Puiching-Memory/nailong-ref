@@ -39,16 +39,9 @@ GSV_REPO = Path(os.environ.get("NAILONG_GSV_REPO", r"C:\workspace\github\GPT-SoV
 ONNX_DIR = Path(os.environ.get("NAILONG_GSV_ONNX", REPO / "native" / "gsv" / "onnx_out"))
 BERT_DIR = Path(os.environ.get("NAILONG_GSV_BERT", REPO / "native" / "gsv" / "chinese-roberta-wwm-ext-large"))
 
-# 参考片段取自 dataset/final/。长度是关键：声纹一致性与参考时长正相关，
-# 实测同一句 probe 换 5 条参考，8.00s 的 src_06 得分 0.7562（高于同长度对照中位 0.7396），
-# 4.28s 的 src_05 只有 0.6696（低于对照 p5 0.7129）。见 native/tests/ref_sweep.py。
-# src_06 还是唯一一条"到 11 段参考的最小余弦 0.6908"都高于参考互相似下沿 0.6843 的，
-# 即所有参考都认可它像奶龙本身。
-REF_WAV = Path(os.environ.get("NAILONG_GSV_REF", REPO / "dataset" / "final" / "src_06_14.22-22.22.wav"))
-REF_TEXT = os.environ.get(
-    "NAILONG_GSV_REF_TEXT",
-    "还好没超过3秒呃，我刚刚出的三水一听就被你吃了，不吃不就浪费了呢。",
-)
+# 当前没有通过听音复核的默认参考；显式提供已核对的音频和逐字文本。
+REF_WAV = Path(os.environ["NAILONG_GSV_REF"]) if os.environ.get("NAILONG_GSV_REF") else None
+REF_TEXT = os.environ.get("NAILONG_GSV_REF_TEXT")
 
 # 上游 sample_topk 没有固定种子，同一句每次韵律都不同。设了这个环境变量就能复现。
 SEED_ENV = "NAILONG_GSV_SEED"
@@ -138,8 +131,12 @@ class Backend:
 
     def __init__(self, device: str = "cpu", ref_wav: str | Path | None = None,
                  ref_text: str | None = None):
-        self.ref_wav = Path(ref_wav) if ref_wav else REF_WAV
-        self.ref_text = ref_text if ref_text is not None else REF_TEXT
+        selected_wav = Path(ref_wav) if ref_wav else REF_WAV
+        selected_text = ref_text if ref_text is not None else REF_TEXT
+        if selected_wav is None or not selected_text or not selected_text.strip():
+            raise ValueError("先提供已听音核对的 NAILONG_GSV_REF 和 NAILONG_GSV_REF_TEXT")
+        self.ref_wav = selected_wav
+        self.ref_text = selected_text.strip()
         _require(ONNX_DIR / "config.json", "exported ONNX dir")
         _require(BERT_DIR, "roberta bert dir")
         _require(self.ref_wav, "reference wav")
@@ -192,7 +189,7 @@ def synthesize(lines: list[Line], out_dir: Path, backend: Backend | None = None,
     # 预检：短于 MIN_CHARS 的台词一定会让 GPT 阶段直接吐 EOS（只出 1 个 token），
     # 那个 EOS 语义码送进 SoVITS 的码本 Gather 会越界。先说清楚，
     # 别等 40s 载完模型才炸。
-    bad = [(l.line_id, l.text) for l in lines if len(l.text) < corpus.MIN_CHARS]
+    bad = [(line.line_id, line.text) for line in lines if len(line.text) < corpus.MIN_CHARS]
     if bad:
         for line_id, text in bad:
             print(f"too short ({len(text)} < {corpus.MIN_CHARS}): {line_id} {text}",

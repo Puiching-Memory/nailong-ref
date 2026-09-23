@@ -1,0 +1,4 @@
+role,model_id,weight_file,bytes,sha256,license,distribution
+primary_speaker_embedding,iic/speech_eres2netv2_sv_zh-cn_16k-common,pretrained_eres2netv2.ckpt,71768231,0eb4057106b2573dd7b132cf0c36273ab29afd192c1610f80baa9c556dbb963c,Apache-2.0,ModelScope cache
+audit_speaker_embedding,IDRnD/ReDimNet M ft_mix vb2+vox2+cnc,M-vb2+vox2+cnc-ft_mix.pt,19726074,1e0716c2f351e79df054554f17c525b899045d2d05e4c839208b975e87d94e6a,upstream repository terms,torch hub cache
+source_separation,facebookresearch/demucs htdemucs,htdemucs.th,,,MIT,downloaded by demucs
