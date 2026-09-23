@@ -14,6 +14,10 @@ dataset/sources/
 dataset/utterances/
 dataset/queries/
 dataset/reels/
+# `prepare-production` 生成的音频只是本地候选；正式训练集需逐段复核后另行发布。
+# 保留 dataset/production/README.md 及 dataset/manifests/ 下的可审计清单。
+dataset/production/accepted/
+dataset/production/quarantine/
 tools/vid-analysis/*.png
 tools/vid-analysis/audio_*.wav
 
