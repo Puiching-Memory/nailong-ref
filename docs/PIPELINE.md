@@ -1,102 +1,79 @@
 # 管线参考
 
-每个阶段都是脚本式模块：`nailong <stage>` 等价于 `python -m nailong.stages.<stage>`。
-阈值和路径都在 [src/nailong/config.py](../src/nailong/config.py)，改参数只改那一处。
+生产链路只有一条：HTDemucs 人声分离 → VAD 切句 → 双声纹嵌入 → 视觉真值校准
+→ 音频判定 → 残留 BGM/SFX 门控。视觉只在预校准阶段使用，批量生产只读音频。
 
 ## 阶段
 
-| 阶段             | 模块                       | 输入                              | 输出                                                                               | 需要 extra |
-| ---------------- | -------------------------- | --------------------------------- | ---------------------------------------------------------------------------------- | ---------- |
-| `separate`       | `stages/separate.py`       | `dataset/sources/src_NN.mp4`      | `data/sep_in/src_NN.wav`、`data/sep_out/htdemucs/src_NN/vocals.wav`                | `sep`      |
-| `segment`        | `stages/segment.py`        | `vocals.wav`                      | `dataset/utterances/utt_NNN.wav`、`utt_manifest.csv`、`dataset/reels/utt_reel.wav` | `spk`      |
-| `transcribe`     | `stages/transcribe.py`     | `utt_NNN.wav`                     | `sv_all.csv`（事件/情绪/文本）                                                     | `asr`      |
-| `embed-redimnet` | `stages/embed_redimnet.py` | `vocals.wav` + `utt_manifest.csv` | `emb_redimnet.npy`                                                                 | `spk`      |
-| `embed-episode`  | `stages/embed_episode.py`  | `vocals.wav`                      | 整集/前后半段嵌入对照报告                                                          | `spk`      |
-| `embed-chunk`    | `stages/embed_chunk.py`    | `vocals.wav` + `utt_manifest.csv` | `emb_chunks.npy`、`chunk_meta.csv`                                                 | `spk`      |
-| `score-long-ref` | `stages/score_long_ref.py` | `vocals.wav` + `emb_redimnet.npy` | `utt_margin_long.csv`                                                              | `spk`      |
-| `score-two-pass` | `stages/score_two_pass.py` | 同上 + `emb_episodes.npy`         | `utt_two_pass.csv`、`emb_episodes.npy`                                             | `spk`      |
-| `verify`         | `stages/verify.py`         | `utt_two_pass.csv` + `sv_all.csv` | 三条证据报告（不写文件）                                                           | `spk`      |
-| `finalize`       | `stages/finalize.py`       | `utt_two_pass.csv` + `sv_all.csv` | `dataset/final/*.wav`、`final_manifest.csv`                                        | `spk`      |
+| 阶段 | 输入 | 输出 | extra |
+| --- | --- | --- | --- |
+| `separate` | `dataset/sources/src_NN.*` | `data/sep_out/htdemucs/src_NN/{vocals,no_vocals}.wav` | `sep` |
+| `segment` | `vocals.wav` | `dataset/utterances/`、`utt_manifest.csv` | `spk` |
+| `transcribe` | 单句 wav | `sv_all.csv` | `asr` |
+| `embed-redimnet` | 人声轨 + 句清单 | `emb_redimnet.npy`，仅作审计旁证 | `spk` |
+| `embed-eres2net` | 人声轨 + 句清单 | `emb_eres2netv2.npy`，生产主后端 | `asr` |
+| `calibrate-visual` | 双嵌入 + `visual_labels.csv` | 四个声纹中心、阈值、`production_scores.csv` | — |
+| `prepare-production` | 全量分数 + 两个 Demucs stem | accepted/quarantine 音频与生产清单 | — |
+| `nailong-tts review/audit/pack` | accepted + 逐段复核 | 机器门禁与正式训练列表 | — |
 
-工具（不产出交付片段）：
+## 决策规则
 
-| 工具            | 用途                                                              |
-| --------------- | ----------------------------------------------------------------- |
-| `annotate`      | 主动学习标注：`seed` / `status` / `query [N]` / `teach 12:1 47:0` |
-| `inspect-group` | 列出 A/B 两组全部成员，判断 B 组是真实说话人还是语气词堆          |
-| `sanity`        | 声纹模型自检：语音 vs 白噪声 vs 440Hz 正弦的余弦矩阵              |
-| `reel`          | 把目录里片段串成试听带（段间 1s 静音）                            |
-| `band`          | 频段/RMS 量化分析，无播放设备时判 BGM 残留                        |
+- 视觉真值：14 条 target、7 条 other speaker、1 条 non-speech。
+- 主模型：ERes2NetV2；按视频留一 AUC 0.759。ReDimNet AUC 0.705，只作旁证。
+- accept 阈值：取“按视频留一负例最高分之上”和最佳 balanced-accuracy 阈值中
+  更严格者；当前为 0.2283。小样本上的观察 FPR=0 不是总体保证。
+- review：落在 accept/reject 之间的句子不自动进入连续候选。
+- 音质门控：`RMS(vocals)-RMS(no_vocals) >= 15dB` 才进入 accepted。
+- 连续片段：3–10 秒，相邻句最大间隔 0.8 秒，导出为 24kHz 单声道 WAV。
 
-## 关键参数
+阈值、归一化参数、模型和输入哈希均在
+`dataset/calibration/calibration.json`，逐段结果在
+`dataset/manifests/production_manifest.csv`。
 
-| 参数                      | 值            | 依据                                                             |
-| ------------------------- | ------------- | ---------------------------------------------------------------- |
-| `GAP_TOL`                 | 0.10s         | 偏松会把相邻不同说话人的台词并成一句，是聚类无簇结构的主因之一   |
-| `MIN_UTT`                 | 0.30s         | 更短的句子人耳也分不出说话人                                     |
-| `SEG_PAD`                 | 0.06s         | 切句前后各留，保住字头字尾                                       |
-| `DB_THRESH` / `SP_THRESH` | -45 dB / 0.25 | 帧 RMS + 250-4000Hz 能量占比双阈值                               |
-| `OUTLIER`                 | `src_02`      | 30s 级嵌入就确认是另一个说话人，全程排除                         |
-| `MIN_A`                   | 0.62          | 组A 内部截尾；#2(0.464) 有人工反例，低分段还混有其他角色的敬语句 |
-| `MIN_RUN` / `MAX_RUN`     | 3.0 / 10.0s   | 交付片段时长窗口                                                 |
-| `HIGHPASS_HZ`             | 80            | 导出高通，压掉分离残留的低频伴奏                                 |
+## 完整复现
 
-## 复现整条链路
+GPU 环境先运行 `./scripts/setup-gpu.ps1`，再使用该脚本输出的 Python 执行：
 
-```bash
-uv sync --extra all
-
-nailong separate                  # 必需：data/sep_out 是后面所有阶段的前提
-nailong segment
-nailong transcribe
-nailong embed-redimnet
-nailong embed-episode
-nailong score-long-ref
-nailong score-two-pass
-nailong verify                    # 人工核对组A 确实是奶龙
-nailong finalize
-nailong-tts pack
+```powershell
+data/gpu_env/Scripts/python.exe -m nailong.cli build-dataset --device cuda:0
 ```
 
-只想核对切分而不碰音频（不读 `data/sep_out`）：
+`build-dataset` 把同一个设备参数传给 Demucs、SenseVoice、ReDimNet 和
+ERes2NetV2。`--plan` 只列命令；缺少 CUDA 时正式运行会失败，不会静默使用 CPU。
+`rank-sources` 也支持 `--device cuda:0`。已有源的分离和嵌入会增量跳过；
+验证 GPU 实际计算需处理新源或指定单独的测试输出。
+
+2026-09-23 在 RTX 4060 Ti 上以 `--batch 1 --device cuda:0` 验证：
+`src_35` 经 Demucs GPU 分离（约 58.5s 轨道的模型进度约 2.6s）、
+SenseVoice GPU 转写 11 句、ReDimNet 与 ERes2NetV2 GPU 嵌入各 11 句。
+后续音频门控得到 1 段 / 4.84s；训练审计按预期因未复核和语料不足失败。
+
+同日再对 5 条官方账号公开视频执行 `fetch-public` → GPU `rank-sources` →
+`build-dataset --batch 5 --ranking data/eval_sep/official/candidate_scores.csv --device cuda:0`。
+共新增 80 个切句，混音预筛约 80.7s，最终只新增 1 段 / 4.08s。
+当前 40 个源约 1539.01s、427 个切句约 1090.60s、accepted 21 段 / 97.16s、
+quarantine 31 段；该次运行后 accepted 均待复核，正式审计失败。
+
+随后对 21 段 accepted 提取对应公开视频的逐时刻画面，逐段记录在
+`dataset/manifests/visual_review.csv`。6 段 / 32.52s 可从角色交替和字幕确认
+跨说话人，已在 `training_review.csv` 标为 `approved=no`；15 段 / 64.64s
+保留待听音状态。画面确认只能排除明显混说话人，不能替代听音验收和逐字转写，
+因此正式训练审计仍无获批准片段。
+
+完成逐段复核并达到训练门槛后，运行 `nailong-tts pack` 生成训练列表。
+
+当前 `nailong-tts pack` 只读取 `dataset/production/accepted/` 中经逐段批准的样本；
+quarantine 永不自动消费。正式门禁要求至少 200 段 / 30 分钟。
+`segment`、`transcribe` 与两套 `embed-*` 默认只追加新源/新句，保持已有视觉标签引用的
+idx 不变。源溯源信息见 `source_manifest.csv`。
+
+## 数据检查
 
 ```bash
-nailong finalize --manifest-only
+nailong reel
+nailong band dataset/production/accepted/*.wav
+nailong-tts stats
 ```
 
-## 旧脚本对照表
-
-重构前根目录有 16 个扁平的 `*.py`。收编时内容改动较大，git 的相似度检测
-没能把它们识别成重命名，因此记录为「删除 + 新增」。下表用于对照旧路径与当前
-模块；旧脚本本身已不在本仓库历史中（提交已压缩为一次），其功能全部由右列
-的模块承接。
-
-| 旧脚本                    | 现在的位置                 |
-| ------------------------- | -------------------------- |
-| `export_utts.py`          | `stages/segment.py`        |
-| `scan_all_sv.py`          | `stages/transcribe.py`     |
-| `extract_emb_redimnet.py` | `stages/embed_redimnet.py` |
-| `extract_emb.py`          | `stages/embed_funasr.py`   |
-| `episode_emb.py`          | `stages/embed_episode.py`  |
-| `chunk_emb.py`            | `stages/embed_chunk.py`    |
-| `cluster.py`              | `stages/cluster.py`        |
-| `long_ref.py`             | `stages/score_long_ref.py` |
-| `two_pass.py`             | `stages/score_two_pass.py` |
-| `verify_A.py`             | `stages/verify.py`         |
-| `final_a.py`              | `stages/finalize.py`       |
-| `annotate.py`             | `tools/annotate.py`        |
-| `dump_group.py`           | `tools/inspect_group.py`   |
-| `sanity.py`               | `tools/sanity.py`          |
-| `make_reel.py`            | `tools/reel.py`            |
-| `band.py`                 | `tools/band.py`            |
-
-`separate` 是新补的阶段，旧脚本里没有对应物。
-
-## 注意
-
-- 阶段模块是脚本式的，**模块级就执行**，`import` 会真的跑起来。
-  这是刻意的取舍：这些逻辑来自一次性研究脚本，塞进函数反而容易改错数值。
-  所以别在测试里 import 它们，用 CLI 调用。
-- `separate` 之前是手敲命令，没留脚本，导致 `data/sep_out/` 被删后
-  8 个下游脚本一起静默失效。现在 `config.vocals_path()` 会在缺文件时
-  直接报错并提示跑哪个命令。
+模型权重的 ID、大小和 SHA-256 见 `dataset/manifests/model_manifest.csv`；源文件与
+两个 Demucs stem 的 SHA-256 见 `dataset/manifests/separation_manifest.csv`。
